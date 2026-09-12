@@ -1269,10 +1269,48 @@ footer{text-align:center;opacity:.6;font-size:12px;margin-top:28px}
       <input id="gpRankDate" type="date" aria-label="ランキングの日付">
     </div>
 
-    <div class="gp-ranking-note">過去のランキングも振り返れます。リセットしてもエントリー記録そのものは残ります。</div>
+    <div class="gp-ranking-note">過去のランキングも振り返れます。リセットしてもエントリー記録そのものは残ります。 キャラたちも毎日それぞれ独立して参加するので、自分がいつも1位になるとは限りません。</div>
     <button id="gpRankReset" type="button" class="gp-reset-btn">↺ この日のランキングをリセット</button>
 
+    <div class="gp-nickname-box" style="margin:14px 0;padding:14px;border:2px dashed #c8bda9;border-radius:18px;background:#fffaf0">
+      <div style="font-weight:900;margin-bottom:8px">🏷️ グランプリで使う名前</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="gpNicknameInput" maxlength="20" placeholder="ニックネーム" style="flex:1;min-width:160px">
+        <button id="gpNicknameSave" type="button">名前を保存</button>
+      </div>
+      <div class="muted" style="margin-top:7px">空欄なら「あなた」で参加します。本名ではなくニックネームがおすすめです。</div>
+    </div>
     <div id="gpYourToday"></div><div id="gpRanking" class="gp-ranking"></div>
+
+    <div id="gpYesterdayTalk" class="feature-card" style="margin-top:14px;display:none">
+      <div class="section-headline" style="margin-bottom:8px">
+        <h3>💬 昨日のグランプリからひとこと</h3>
+        <button id="gpYesterdayTalkAgain" type="button">🎲 もう一言</button>
+      </div>
+      <div id="gpYesterdayTalkBody"></div>
+    </div>
+
+    <div class="gp-battle-history" style="margin-top:18px;padding-top:16px;border-top:2px dashed #c8bda9">
+      <div class="section-headline" style="margin-bottom:8px">
+        <h3>📖 毎日のグランプリ戦績</h3>
+        <span class="soft-chip">失敗でも勝利！</span>
+      </div>
+      <div class="gp-ranking-note">
+        その日の勝負を日付ごとに残します。成功も失敗も1件＝1ポイント。
+        「失敗を重ねて優勝」も、立派なこのグランプリの戦績です。
+      </div>
+
+      <div id="gpBattleHistoryStats" class="feature-card" style="margin-top:10px;padding:12px"></div>
+
+      <button id="gpBattleHistoryReset" type="button" class="gp-reset-btn" style="margin-top:10px">
+        🗑️ 戦績履歴をリセット
+      </button>
+      <div class="muted" style="margin-top:6px">
+        ※ 戦績履歴だけを消します。成功・失敗のエントリー記録そのものは残ります。
+      </div>
+
+      <div id="gpBattleHistory"></div>
+    </div>
   </div>
 
   <div class="gp-philo">
@@ -3322,7 +3360,7 @@ render();
   const GP_KEY='jobStepGrandPrix_v2';
   const el=id=>document.getElementById(id);
   const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-  let gp={mode:'success',entries:[],rankingResets:{},resetSeeds:{}};
+  let gp={mode:'success',entries:[],rankingResets:{},resetSeeds:{},dailyBattles:{},historyResetAt:0};
   let editIndex=-1;
   try{
     const saved=JSON.parse(localStorage.getItem(GP_KEY)||'null');
@@ -3336,6 +3374,7 @@ render();
   if(!Array.isArray(gp.entries)) gp.entries=[];
   if(!gp.rankingResets || typeof gp.rankingResets!=='object') gp.rankingResets={};
   if(!gp.resetSeeds || typeof gp.resetSeeds!=='object') gp.resetSeeds={};
+  if(!gp.dailyBattles || typeof gp.dailyBattles!=='object') gp.dailyBattles={};
 
   function saveGP(){ localStorage.setItem(GP_KEY,JSON.stringify(gp)); }
 
@@ -3416,6 +3455,12 @@ render();
     const d=new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
+  function localDateKeyFromAt(at){
+    if(!at) return '';
+    const d=new Date(at);
+    if(Number.isNaN(d.getTime())) return String(at).slice(0,10);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
   function shiftDate(baseIso,days){
     const [y,m,d]=baseIso.split('-').map(Number);
     const x=new Date(y,m-1,d);
@@ -3477,9 +3522,291 @@ render();
     if(changed) saveGP();
   }
 
+  function grandPrixNickname(){
+    const v=(localStorage.getItem('grandPrixNickname_v1')||'').trim();
+    return v ? v.slice(0,20) : 'あなた';
+  }
+
+  function gpSeededNumber(seed){
+    let h=2166136261;
+    for(let i=0;i<seed.length;i++){
+      h^=seed.charCodeAt(i);
+      h=Math.imul(h,16777619);
+    }
+    h+=(h<<13); h^=(h>>>7); h+=(h<<3); h^=(h>>>17); h+=(h<<5);
+    return (h>>>0)/4294967296;
+  }
+
+  function gpCharacterDailyScores(dateKey){
+    const profiles={
+      'すっとばし男':{min:1,max:5,failBias:.58},
+      'イジワル女':{min:1,max:5,failBias:.32},
+      '千波':{min:0,max:4,failBias:.30},
+      '安高':{min:1,max:4,failBias:.22},
+      '眠井':{min:0,max:3,failBias:.38},
+      'フエッティー':{min:0,max:4,failBias:.42},
+      'チョンボ部長':{min:1,max:5,failBias:.72},
+      '尾取':{min:0,max:4,failBias:.28},
+      'ぶしつけ男':{min:0,max:5,failBias:.48}
+    };
+    return Object.entries(profiles).map(([name,p])=>{
+      const r1=gpSeededNumber(dateKey+'|'+name+'|total');
+      const r2=gpSeededNumber(dateKey+'|'+name+'|split');
+      const total=p.min+Math.floor(r1*(p.max-p.min+1));
+      let failure=Math.round(total*(p.failBias*.65+r2*.45));
+      failure=Math.max(0,Math.min(total,failure));
+      return [name,{total,success:total-failure,failure,isUser:false}];
+    });
+  }
+
+  function grandPrixNickname(){
+    const v=(localStorage.getItem('grandPrixNickname_v1')||'').trim();
+    return v ? v.slice(0,20) : 'あなた';
+  }
+
+
+  function buildBattleSnapshot(dateKey){
+    const resetAt=Number(gp.rankingResets?.[dateKey]||0);
+    const dayEntries=gp.entries.filter(x=>{
+      if(localDateKeyFromAt(x.at)!==dateKey) return false;
+      if(!resetAt) return true;
+      const ts=Date.parse(x.at||'');
+      return Number.isFinite(ts) && ts>resetAt;
+    });
+    const nickname=grandPrixNickname();
+    const success=dayEntries.filter(x=>x.type==='success').length;
+    const failure=dayEntries.length-success;
+    const rows=gpCharacterDailyScores(dateKey).map(([name,v])=>[
+      name,{success:v.success,failure:v.failure,total:v.total,isUser:false}
+    ]);
+    if(dayEntries.length){
+      rows.push([nickname,{success,failure,total:dayEntries.length,isUser:true}]);
+    }
+    rows.sort((a,b)=>
+      b[1].total-a[1].total ||
+      b[1].success-a[1].success ||
+      (a[1].isUser===b[1].isUser ? 0 : (a[1].isUser ? 1 : -1)) ||
+      a[0].localeCompare(b[0],'ja')
+    );
+    let lastTotal=null, rank=0;
+    const ranked=rows.map(([name,v],i)=>{
+      if(v.total!==lastTotal){ rank=i+1; lastTotal=v.total; }
+      return {name,success:v.success,failure:v.failure,total:v.total,isUser:v.isUser,rank};
+    });
+    return {
+      date:dateKey,
+      updatedAt:new Date().toISOString(),
+      nickname,
+      userTotal:dayEntries.length,
+      rows:ranked
+    };
+  }
+
+  function saveBattleSnapshot(dateKey){
+    // 自分のエントリーがある日だけ「自分が参加した戦績」として保存。
+    const snap=buildBattleSnapshot(dateKey);
+    if(snap.userTotal<=0) return;
+    gp.dailyBattles[dateKey]=snap;
+    saveGP();
+  }
+
+  function rebuildBattleHistoryFromEntries(){
+    const resetAt=Number(gp.historyResetAt||0);
+    const targetEntries=gp.entries.filter(x=>{
+      if(!resetAt) return true;
+      const ts=Date.parse(x.at||'');
+      return Number.isFinite(ts) && ts>resetAt;
+    });
+    const days=[...new Set(targetEntries.map(x=>localDateKeyFromAt(x.at)).filter(Boolean))];
+    let changed=false;
+    days.forEach(day=>{
+      const snap=buildBattleSnapshot(day);
+      if(snap.userTotal>0){
+        gp.dailyBattles[day]=snap;
+        changed=true;
+      }
+    });
+    if(changed) saveGP();
+  }
+
+  function resetBattleHistory(){
+    if(!confirm('毎日のグランプリ戦績履歴をリセットしますか？\n成功・失敗のエントリー記録そのものは残ります。')) return;
+    gp.dailyBattles={};
+    gp.historyResetAt=Date.now();
+    saveGP();
+    renderBattleHistory();
+  }
+
+  function renderBattleHistory(){
+    const box=el('gpBattleHistory');
+    const statsBox=el('gpBattleHistoryStats');
+    if(!box) return;
+    const days=Object.keys(gp.dailyBattles||{}).sort().reverse();
+
+    let totalEntries=0, totalSuccess=0, totalFailure=0, firstCount=0;
+    days.forEach(day=>{
+      const s=gp.dailyBattles[day];
+      const user=(s?.rows||[]).find(r=>r.isUser);
+      if(user){
+        totalEntries+=Number(user.total||0);
+        totalSuccess+=Number(user.success||0);
+        totalFailure+=Number(user.failure||0);
+        if(Number(user.rank||0)===1) firstCount++;
+      }
+    });
+
+    if(statsBox){
+      statsBox.innerHTML=`<div style="font-weight:900;margin-bottom:6px">🙋 自分のグランプリ集計</div>
+        <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+          <div><b>${days.length}</b><br><span class="muted">戦績日数</span></div>
+          <div><b>${totalEntries}</b><br><span class="muted">エントリー数</span></div>
+          <div><b>✨ ${totalSuccess}</b><br><span class="muted">成功</span></div>
+          <div><b>💥 ${totalFailure}</b><br><span class="muted">失敗</span></div>
+        </div>
+        <div style="margin-top:8px"><b>🥇 1位になった日：${firstCount}日</b></div>`;
+    }
+
+    if(!days.length){
+      if(statsBox){
+        statsBox.innerHTML='<b>🙋 自分のグランプリ集計</b><div class="muted" style="margin-top:6px">まだ戦績はありません。</div>';
+      }
+      box.innerHTML='<div class="gp-rank-empty" style="margin-top:10px">まだ戦績はありません。最初のエントリーから記録が始まります。</div>';
+      return;
+    }
+    box.innerHTML=days.map(day=>{
+      const s=gp.dailyBattles[day];
+      const rows=Array.isArray(s.rows)?s.rows:[];
+      const top=rows.filter(r=>r.rank===1);
+      const user=rows.find(r=>r.isUser);
+      const winner=top.map(r=>r.name).join('・') || '記録なし';
+      const userText=user ? `${user.rank}位・合計${user.total}（成功${user.success}／失敗${user.failure}）` : '参加なし';
+      const topDetail=top.map(r=>`${esc(r.name)} 合計${r.total}（✨${r.success} 💥${r.failure}）`).join(' ／ ');
+      return `<details class="gp-history-day" style="margin-top:10px;border:2px solid #d8cfbf;border-radius:16px;padding:10px 12px;background:#fff">
+        <summary style="cursor:pointer;font-weight:900">
+          🏆 ${esc(day)}　🥇 ${esc(winner)}
+          ${day===todayKey()?'<span class="soft-chip" style="margin-left:6px">今日・途中経過</span>':''}
+        </summary>
+        <div style="margin-top:10px;line-height:1.8">
+          <div><b>🥇 1位：</b>${topDetail}</div>
+          <div><b>🙋 ${esc(s.nickname||'あなた')}：</b>${esc(userText)}</div>
+          ${user?`<div><b>📝 自分のエントリー数：</b>${user.total}件（✨成功 ${user.success}／💥失敗 ${user.failure}）</div>`:''}
+          <div class="muted" style="margin-top:5px">成功も失敗も同じ1ポイント。失敗で勝っても優勝です。</div>
+        </div>
+      </details>`;
+    }).join('');
+  }
+
+
+  function buildSafeGrandPrixShareSummary(){
+    const battles=gp?.dailyBattles||{};
+    const days=Object.keys(battles).sort();
+    let total=0, success=0, failure=0, wins=0, best=0;
+    days.forEach(day=>{
+      const s=battles[day];
+      const user=(s?.rows||[]).find(r=>r.isUser);
+      if(!user) return;
+      total+=Number(user.total||0);
+      success+=Number(user.success||0);
+      failure+=Number(user.failure||0);
+      if(Number(user.rank||0)===1) wins++;
+      best=Math.max(best,Number(user.total||0));
+    });
+    const today=todayKey();
+    const todaySnap=battles[today];
+    const todayUser=(todaySnap?.rows||[]).find(r=>r.isUser);
+    const todayWinner=(todaySnap?.rows||[]).find(r=>Number(r.rank||0)===1);
+    return {
+      version:1,
+      battleDays:days.length,
+      totalEntries:total,
+      success,
+      failure,
+      wins,
+      bestDailyEntries:best,
+      todayRank:todayUser?Number(todayUser.rank||0):null,
+      todayTotal:todayUser?Number(todayUser.total||0):0,
+      todayWinner:todayWinner?String(todayWinner.name||''):null,
+      message:'成功も失敗も1件=1ポイント。失敗も恐れず、記録して次へ。'
+    };
+  }
+
+  function gpYesterdayKey(){
+    const d=new Date();
+    d.setDate(d.getDate()-1);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function gpYesterdayTalkCandidates(){
+    const key=gpYesterdayKey();
+    const snap=gp.dailyBattles?.[key];
+    if(!snap || !Array.isArray(snap.rows) || !snap.rows.length) return [];
+
+    const user=snap.rows.find(r=>r.isUser);
+    const winners=snap.rows.filter(r=>Number(r.rank)===1);
+    const winner=winners[0];
+    const nickname=(snap.nickname||grandPrixNickname()||'あなた').trim() || 'あなた';
+    const userRank=user ? Number(user.rank||0) : 0;
+    const userTotal=user ? Number(user.total||0) : 0;
+    const userSuccess=user ? Number(user.success||0) : 0;
+    const userFailure=user ? Number(user.failure||0) : 0;
+    const winnerName=winner?.name||'だれか';
+    const winnerTotal=Number(winner?.total||0);
+
+    const base=[
+      ['チョンボ部長',
+       `昨日のグランプリ、覚えておりますかな？ ${nickname}さんは${userRank?userRank+'位':'参加なし'}でしたぞ。成功も失敗も、記録した分だけちゃんと戦績になりますな。いやはや。`],
+      ['イジワル女',
+       `昨日は${userTotal}エントリーだったのね♪ 成功${userSuccess}、失敗${userFailure}。失敗まで点になるんだから、怖がって隠すよりネタにしちゃいなさいよ🤣`],
+      ['すっとばし男',
+       `昨日は${userTotal}点か！成功でも失敗でも動いた証拠だぜっ！今日は昨日より一個でも前に出りゃ十分だ！`],
+      ['尾取',
+       `昨日の${userTotal}件、ちゃんと残したのね♪ うまくいったことだけじゃなく、失敗も記録できたこと自体が続けている証拠だと思うわ。`],
+      ['フエッティー',
+       `昨日は失敗が${userFailure}件あったんですね……。でも、隠さずエントリーできたのってすごいです。僕ならちょっと勇気いります。`],
+      ['安高',
+       `昨日は合計${userTotal}件。成功${userSuccess}、失敗${userFailure}。失敗もデータとして残せば、次の判断材料になります。カチャ。`],
+      ['眠井',
+       `昨日の記録、残ってるね。失敗があっても、今日まで持ってこなくていい。今日は今日で、いいね。`],
+      ['ぶしつけ男',
+       `昨日失敗した？ だから何だ。記録して次に使えるなら、消したり隠したりするよりよっぽどマシだろ。`]
+    ];
+
+    if(winnerName==='チョンボ部長' && Number(winner?.failure||0)>Number(winner?.success||0)){
+      base.unshift(['チョンボ部長',
+        `いやはや……昨日は私が${winnerTotal}点で優勝ですな。しかも失敗${winner.failure}件。失敗で優勝とは、なんともこのグランプリらしい話ですぞ（笑）。`]);
+    } else if(user && userRank===1){
+      base.unshift(['イジワル女',
+        `昨日は${nickname}さんが1位じゃない♪ 成功でも失敗でも、ちゃんと出した人が勝つのよ。今日も遠慮なくエントリーしなさい🤣`]);
+    } else if(winner){
+      base.unshift(['すっとばし男',
+        `昨日の1位は${winnerName}、${winnerTotal}点！ ${nickname}さんも今日は追いかけてみるか？失敗だって1点なんだから、恐れるこたぁねぇぜっ！`]);
+    }
+    return base;
+  }
+
+  function renderYesterdayTalk(forceRandom=false){
+    const wrap=el('gpYesterdayTalk'), body=el('gpYesterdayTalkBody');
+    if(!wrap||!body) return;
+    const list=gpYesterdayTalkCandidates();
+    if(!list.length){
+      wrap.style.display='none';
+      return;
+    }
+    wrap.style.display='';
+    let index=Number(sessionStorage.getItem('gpYesterdayTalkIndex')||0);
+    if(forceRandom || index<0 || index>=list.length){
+      index=Math.floor(Math.random()*list.length);
+      sessionStorage.setItem('gpYesterdayTalkIndex',String(index));
+    }
+    const pair=list[index];
+    const has=!!imgFor(pair[0]);
+    body.innerHTML=`<div class="gp-react${has?'':' noimg'}">${pic(pair[0])}<div class="gp-react-text"><b>${esc(pair[0])}</b><br>${esc(pair[1])}</div></div>`;
+  }
+
   function renderRanking(){
     const box=el('gpRanking');
     if(!box) return;
+
     const tk=rankingDateKey||todayKey();
     rankingDateKey=tk;
 
@@ -3488,60 +3815,69 @@ render();
 
     const resetAt=Number(gp.rankingResets?.[tk]||0);
     const todays=gp.entries.filter(x=>{
-      if((x.at||'').slice(0,10)!==tk) return false;
+      if(localDateKeyFromAt(x.at)!==tk) return false;
       if(!resetAt) return true;
-      const t=Date.parse(x.at||'');
-      return Number.isFinite(t) && t>resetAt;
+      const ts=Date.parse(x.at||'');
+      return Number.isFinite(ts) && ts>resetAt;
     });
 
     const yourSuccess=todays.filter(x=>x.type==='success').length;
     const yourFailure=todays.length-yourSuccess;
+    const nickname=grandPrixNickname();
+
     const yourBox=el('gpYourToday');
     if(yourBox){
       yourBox.innerHTML=`<div class="gp-your-card">
         <div class="gp-your-icon">🙋</div>
         <div>
-          <div class="gp-your-name">${tk===todayKey()?'あなたの今日のエントリー':'あなたのこの日のエントリー'}</div>
+          <div class="gp-your-name">${esc(nickname)}${tk===todayKey()?'の今日のエントリー':'のこの日のエントリー'}</div>
           <div class="gp-your-counts">✨ 成功 ${yourSuccess}　💥 失敗 ${yourFailure}</div>
         </div>
         <div class="gp-your-total">合計 ${todays.length}</div>
       </div>`;
     }
 
-    const counts={};
-    chars.forEach(n=>counts[n]={success:0,failure:0,total:0});
-    const seed=gp.resetSeeds?.[tk];
-    if(seed){
-      chars.forEach(n=>{
-        const v=seed[n]||{};
-        counts[n].success=Number(v.success||0);
-        counts[n].failure=Number(v.failure||0);
-        counts[n].total=counts[n].success+counts[n].failure;
-      });
-    }
-    todays.forEach(x=>{
-      const n=x.char || 'すっとばし男';
-      if(!counts[n]) counts[n]={success:0,failure:0,total:0};
-      if(x.type==='success') counts[n].success++; else counts[n].failure++;
-      counts[n].total++;
-    });
+    const rows=gpCharacterDailyScores(tk);
 
-    const rows=Object.entries(counts).filter(([,v])=>v.total>0)
-      .sort((a,b)=>b[1].total-a[1].total || b[1].success-a[1].success || chars.indexOf(a[0])-chars.indexOf(b[0]));
-
-    if(!rows.length){
-      const resetMsg=resetAt ? '<br><span style="font-size:12px">この日はランキングをリセット済みです。</span>' : '';
-      box.innerHTML=`<div class="gp-rank-empty">この日のランキングはまだありません。${resetMsg}</div>`;
-      return;
+    if(todays.length>0){
+      rows.push([nickname,{
+        success:yourSuccess,
+        failure:yourFailure,
+        total:todays.length,
+        isUser:true
+      }]);
     }
 
-    box.innerHTML=rows.map(([n,v],i)=>`
-      <div class="gp-rank-row">
-        <div class="gp-rank-no">${i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'位'}</div>
-        <div>${pic(n)}</div>
-        <div><div class="gp-rank-name">${esc(n)}</div><div class="gp-rank-counts">✨ 成功 ${v.success}　💥 失敗 ${v.failure}</div></div>
+    rows.sort((a,b)=>
+      b[1].total-a[1].total ||
+      b[1].success-a[1].success ||
+      (a[1].isUser===b[1].isUser ? 0 : (a[1].isUser ? 1 : -1)) ||
+      a[0].localeCompare(b[0],'ja')
+    );
+
+    let lastTotal=null;
+    let currentRank=0;
+
+    box.innerHTML=rows.map(([n,v],i)=>{
+      if(v.total!==lastTotal){
+        currentRank=i+1;
+        lastTotal=v.total;
+      }
+      const medal=currentRank===1?'🥇':currentRank===2?'🥈':currentRank===3?'🥉':`${currentRank}位`;
+      const avatar=v.isUser
+        ? '<div class="gp-your-icon" style="width:54px;height:54px;font-size:34px">🙋</div>'
+        : pic(n);
+
+      return `<div class="gp-rank-row${v.isUser?' gp-user-rank':''}">
+        <div class="gp-rank-no">${medal}</div>
+        <div>${avatar}</div>
+        <div>
+          <div class="gp-rank-name">${esc(n)}</div>
+          <div class="gp-rank-counts">✨ 成功 ${v.success}　💥 失敗 ${v.failure}</div>
+        </div>
         <div class="gp-rank-score">合計 ${v.total}</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }
 
   function renderList(){
@@ -3556,7 +3892,7 @@ render();
         <b>${x.type==='success'?'✨':'💥'} ${esc(x.title||'無題')}</b>
         <div>${esc(x.story||'')}</div>
         ${x.learn?`<div style="margin-top:6px"><strong>📚 学び：</strong>${esc(x.learn)}</div>`:''}
-        <div class="meta">${x.type==='success'?'うれしさ':'笑える度'} ${'★'.repeat(x.emotion||3)}${'☆'.repeat(5-(x.emotion||3))} ・ 学び度 ${'★'.repeat(x.lr||3)}${'☆'.repeat(5-(x.lr||3))} ・ ${esc((x.at||'').slice(0,10))}</div>
+        <div class="meta">${x.type==='success'?'うれしさ':'笑える度'} ${'★'.repeat(x.emotion||3)}${'☆'.repeat(5-(x.emotion||3))} ・ 学び度 ${'★'.repeat(x.lr||3)}${'☆'.repeat(5-(x.lr||3))} ・ ${esc(localDateKeyFromAt(x.at))}</div>
         <div class="actions"><button type="button" data-gp-edit="${i}">編集</button><button type="button" data-gp-del="${i}">削除</button></div>
       </div>`;
     }).join('') || '<div class="gp-rank-empty">まだエントリーはありません。</div>';
@@ -3590,12 +3926,30 @@ render();
     });
   }
 
-  function renderAll(){ renderRanking(); renderList(); }
+  function renderAll(){
+    saveBattleSnapshot(rankingDateKey||todayKey());
+    renderRanking();
+    renderList();
+    renderBattleHistory();
+    renderYesterdayTalk();
+  }
 
   el('gpRankToday')?.addEventListener('click',()=>setRankingDate(todayKey()));
   el('gpRankYesterday')?.addEventListener('click',()=>setRankingDate(shiftDate(todayKey(),-1)));
   el('gpRankWeekAgo')?.addEventListener('click',()=>setRankingDate(shiftDate(todayKey(),-7)));
   el('gpRankDate')?.addEventListener('change',e=>{ if(e.target.value) setRankingDate(e.target.value); });
+  const gpNickInput=el('gpNicknameInput');
+  if(gpNickInput) gpNickInput.value=(localStorage.getItem('grandPrixNickname_v1')||'').trim();
+  el('gpNicknameSave')?.addEventListener('click',()=>{
+    const v=(el('gpNicknameInput')?.value||'').trim().slice(0,20);
+    if(v) localStorage.setItem('grandPrixNickname_v1',v);
+    else localStorage.removeItem('grandPrixNickname_v1');
+    renderRanking();
+  });
+
+  el('gpBattleHistoryReset')?.addEventListener('click',resetBattleHistory);
+  el('gpYesterdayTalkAgain')?.addEventListener('click',()=>renderYesterdayTalk(true));
+
   el('gpRankReset')?.addEventListener('click',()=>{
     const tk=rankingDateKey||todayKey();
     if(!confirm(`${tk} のランキング表示をリセットしますか？\nエントリー記録そのものは削除されません。`)) return;
@@ -3656,6 +4010,7 @@ render();
   });
 
   ensureChars();
+  rebuildBattleHistoryFromEntries();
   rankingDateKey=todayKey();
   if(el('gpRankDate')) el('gpRankDate').value=rankingDateKey;
   setMode(gp.mode);
@@ -4055,7 +4410,8 @@ render();
       favoriteChar:q('shareFavoriteChar')?.value||'すっとばし男',
       oneWord:q('shareOneWord')?.value.trim()||'',
       selectedWord:profile.selectedWord||'',
-      wordFeeling:q('shareWordFeeling')?.value.trim()||''
+      wordFeeling:q('shareWordFeeling')?.value.trim()||'',
+      grandPrix: (typeof buildSafeGrandPrixShareSummary==='function' ? buildSafeGrandPrixShareSummary() : null)
     };
     localStorage.setItem(PREF_KEY,JSON.stringify(profile));
   }
@@ -4186,7 +4542,13 @@ render();
           </div>
           ${p.oneWord?`<div class="shared-word">「${esc(p.oneWord)}」</div>`:''}
           ${p.selectedWord?`<div class="shared-char-line"><b>🌟 選んだ${esc(c)}の言葉</b><br>「${esc(p.selectedWord)}」</div>`:`<div class="shared-char-line"><b>${esc(c)}</b>：${esc(line)}</div>`}
-          ${p.wordFeeling?`<div class="shared-word"><b>💭 この言葉をどう思った？</b><br>${esc(p.wordFeeling)}</div>`:''}
+          ${p.wordFeeling?`<div class="shared-word"><b>💭 この言葉をどう思った？</b><br>${esc(p.wordFeeling)}${x.grandPrix?`<div class="share-gp" style="margin-top:9px;padding:9px 11px;border-radius:12px;background:#fff7df">
+      <b>🏆 グランプリ戦績</b><br>
+      参加 ${Number(x.grandPrix.battleDays||0)}日 ／ エントリー ${Number(x.grandPrix.totalEntries||0)}件
+      （✨${Number(x.grandPrix.success||0)}・💥${Number(x.grandPrix.failure||0)}）<br>
+      🥇 優勝 ${Number(x.grandPrix.wins||0)}回 ／ 最高 ${Number(x.grandPrix.bestDailyEntries||0)}件
+      ${x.grandPrix.todayRank?`<br>今日 ${Number(x.grandPrix.todayRank)}位・${Number(x.grandPrix.todayTotal||0)}点`:''}
+    </div>`:''}</div>`:''}
           <div class="shared-actions"><button type="button" data-shared-del="${i}">削除</button></div>
         </div>
       </div>`;
