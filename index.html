@@ -1288,6 +1288,10 @@ footer{text-align:center;opacity:.6;font-size:12px;margin-top:28px}
         <button id="gpYesterdayTalkAgain" type="button">🎲 もう一言</button>
       </div>
       <div id="gpYesterdayTalkBody"></div>
+      <div id="gpChonboTsukkomiArea" style="display:none;margin-top:10px">
+        <button id="gpChonboTsukkomiBtn" type="button">💬 チョンボ部長にツッコむ</button>
+        <div id="gpChonboTsukkomiReply" style="margin-top:9px"></div>
+      </div>
     </div>
 
     <div class="gp-battle-history" style="margin-top:18px;padding-top:16px;border-top:2px dashed #c8bda9">
@@ -3801,6 +3805,47 @@ render();
     const pair=list[index];
     const has=!!imgFor(pair[0]);
     body.innerHTML=`<div class="gp-react${has?'':' noimg'}">${pic(pair[0])}<div class="gp-react-text"><b>${esc(pair[0])}</b><br>${esc(pair[1])}</div></div>`;
+
+    const tsArea=el('gpChonboTsukkomiArea');
+    const tsReply=el('gpChonboTsukkomiReply');
+    if(tsReply) tsReply.innerHTML='';
+    if(tsArea) tsArea.style.display=(pair[0]==='チョンボ部長')?'':'none';
+  }
+
+  function gpChonboTsukkomi(){
+    const reply=el('gpChonboTsukkomiReply');
+    if(!reply) return;
+    const key=gpYesterdayKey();
+    const snap=gp.dailyBattles?.[key];
+    const chonbo=(snap?.rows||[]).find(r=>r.name==='チョンボ部長');
+    const fails=Number(chonbo?.failure||0);
+
+    let userLine='チョンボ部長！チョンボない方がいいんですよ！笑';
+    let replies;
+
+    if(fails===0){
+      userLine='チョンボ部長！0件ならむしろ大勝利ですよ！笑';
+      replies=[
+        '……おおっ！そうでしたな。ランキングでは0点でも、人生では満点かもしれませんな（笑）。いやはや。',
+        'なるほど！チョンボなしを悔しがっている場合ではありませんな。今日は胸を張って帰りますぞ（笑）。',
+        'おお、危うく失敗を探しに行くところでしたぞ。止めてくださって助かりましたな（笑）。'
+      ];
+    }else if(fails<=1){
+      replies=[
+        '……おお、そうでしたな。グランプリを始めてから、どうも価値観がおかしくなってきましてな（笑）。いやはや。',
+        'たしかに！失敗数で順位を上げようとしてはいけませんな（笑）。少ない日は素直に喜ぶことにしますぞ。',
+        'いやはや、ごもっとも。チョンボは競技ではなく、起きたら笑って次へ進むものですな。'
+      ];
+    }else{
+      replies=[
+        `いやはや、昨日は${fails}件もありましたからな。……しかし増やしに行く必要はありませんぞ（笑）。起きた分だけネタにして、次へ進みましょう。`,
+        `ごもっともですな（笑）。失敗${fails}件で上位になっても、わざとチョンボしてはいけませんぞ。グランプリは失敗を怖がらないための大会ですからな。`,
+        `そうでしたな！点数のために失敗する大会ではありません（笑）。成功は喜ぶ、失敗は隠さない。それぐらいがちょうどいいですな。`
+      ];
+    }
+    const answer=replies[Math.floor(Math.random()*replies.length)];
+    reply.innerHTML=`<div class="gp-react noimg"><div class="gp-react-text"><b>💬 あなた</b><br>${esc(userLine)}</div></div>
+      <div class="gp-react${imgFor('チョンボ部長')?'':' noimg'}" style="margin-top:8px">${pic('チョンボ部長')}<div class="gp-react-text"><b>チョンボ部長</b><br>${esc(answer)}</div></div>`;
   }
 
   function renderRanking(){
@@ -3949,6 +3994,7 @@ render();
 
   el('gpBattleHistoryReset')?.addEventListener('click',resetBattleHistory);
   el('gpYesterdayTalkAgain')?.addEventListener('click',()=>renderYesterdayTalk(true));
+  el('gpChonboTsukkomiBtn')?.addEventListener('click',gpChonboTsukkomi);
 
   el('gpRankReset')?.addEventListener('click',()=>{
     const tk=rankingDateKey||todayKey();
